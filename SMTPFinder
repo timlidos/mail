@@ -1,0 +1,139 @@
+package com.github.timlidos.smpt;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Properties;
+import java.util.regex.Pattern;
+import javax.mail.BodyPart;
+import javax.mail.FetchProfile;
+import javax.mail.Folder;
+import javax.mail.Message;
+import javax.mail.MessagingException;
+import javax.mail.Multipart;
+import javax.mail.Session;
+import javax.mail.Store;
+import javax.mail.search.AndTerm;
+import javax.mail.search.ComparisonTerm;
+import javax.mail.search.RecipientStringTerm;
+import javax.mail.search.SubjectTerm;
+import javax.mail.search.SearchTerm;
+import javax.mail.search.ReceivedDateTerm;
+import org.apache.commons.lang.StringUtils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class SMTPFinder {
+
+    private static Logger log = LoggerFactory.getLogger(SMTPFinder.class);
+
+    private static final String INBOX_FOLDER = "inbox";
+    private static final String DEFAULT_PROPERTIES_FILE = "smtp.properties";
+    private static final Pattern TEXT_HTML_MIME_PATTERN = Pattern.compile(Pattern.quote("text/html"), Pattern.CASE_INSENSITIVE);
+    
+    private String propertiesFile = DEFAULT_PROPERTIES_FILE;
+
+    public SMTPFinder() {
+        this(DEFAULT_PROPERTIES_FILE);
+    }
+    
+    public SMTPFinder(String propertiesFile) {
+        this.propertiesFile = propertiesFile;
+    }
+
+    public Email findEmail(String subjectPattern, String recipient, String user, String password) {
+        Email email = null;
+        Store store = null;
+        Folder inbox = null;
+        try {
+            store = getConnectedStore(user, password);
+            inbox = store.getFolder(INBOX_FOLDER);
+            inbox.open(Folder.READ_ONLY);
+            List<SearchTerm> terms = new ArrayList<>();
+            if (StringUtils.isNotBlank(subjectPattern)) {
+                terms.add(new SubjectTerm(subjectPattern));
+            }
+            if (StringUtils.isNotBlank(recipient)) {
+                terms.add(new RecipientStringTerm(Message.RecipientType.TO, recipient));
+            }
+            terms.add(new ReceivedDateTerm(ComparisonTerm.GT, getDateNow()));
+            Message[] messages = inbox.search(new AndTerm(terms.toArray(new SearchTerm[terms.size()])));
+            FetchProfile fp = new FetchProfile();
+            fp.add(FetchProfile.Item.ENVELOPE);
+            fp.add(FetchProfile.Item.CONTENT_INFO);
+            inbox.fetch(messages, fp);
+            if (messages == null || messages.length == 0) {
+                log.error("Message for recipient [{}] and subject [{}] not found.", recipient, subjectPattern);
+                throw new RuntimeException("Messages not found.");
+            }
+            Message m = selectLast(messages);
+            email = new Email(m.getSubject(), getBody(m));
+        } catch (IOException | MessagingException e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                if (inbox != null) inbox.close(false);
+                if (store != null) store.close();
+            } catch (Exception e) {
+                log.error("Cant close store or inbox.", e);
+            }
+        }
+        return email;
+    }
+
+    private Message selectLast(Message[] messages) throws MessagingException {
+        if (messages.length == 1) {
+            return messages[0];
+        }
+        Message last = messages[0];
+        for (Message m : messages) {
+            if (last.getSentDate().before(m.getSentDate())) {
+                last = m;
+            }
+        }
+        return last;
+        
+    }
+    
+    private Store getConnectedStore(String user, String password) throws IOException, MessagingException {
+        Properties props = new Properties();
+        props.load(getClass().getClassLoader().getResourceAsStream(propertiesFile));
+        if (log.isDebugEnabled()) {
+            props.put("mail.debug", "true");
+        }
+        Session session = Session.getDefaultInstance(props, null);
+        Store store = session.getStore("imaps");
+        store.connect(
+                props.getProperty("mail.smtp.host"), user, password);
+        return store;
+    }
+    
+    private String getBody(Message message) throws IOException, MessagingException {
+        String body = null;
+        Object content = message.getContent();
+        if (content instanceof Multipart) {
+            Multipart mp = (Multipart) content;
+            for (int i = 0; i < mp.getCount(); i++) {
+                BodyPart bp = mp.getBodyPart(i);
+                if (TEXT_HTML_MIME_PATTERN.matcher(bp.getContentType()).find()) {
+                    body = (String) bp.getContent();
+                }
+            }
+        } else {
+            body = (String) content;
+        }
+        return body;
+    }
+    
+    private Date getDateNow() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.HOUR, 0);
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return new Date(calendar.getTimeInMillis());
+    }
+}
