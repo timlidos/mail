@@ -1,0 +1,42 @@
+package com.github.mail.timlidos
+
+import org.apache.commons.io.FileUtils;
+import org.openqa.selenium.*;
+import org.openqa.selenium.support.PageFactory;
+import org.testng.Assert;
+import org.w3c.dom.Document;
+import javax.imageio.ImageIO;
+import javax.xml.namespace.QName;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpression;
+import javax.xml.xpath.XPathFactory;
+import java.io.*;
+import java.net.URLConnection;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public abstract class HelperDataGenerator {
+
+    public static String getPublisherActivationLink(String recipient, String url,
+                                                    String user, String password) {
+        SMTPFinder SMTPFind = new SMTPFinder();
+        Email registrationEmail = SMTPFind.findEmail(
+                "Please verify your email", recipient, user, password);
+        //String test = registrationEmail.getBody();
+        //System.out.println(test);
+        int firstIndex = registrationEmail.getBody().indexOf(url + "/finish");
+        System.out.println("FIRST INDEX IS: " + firstIndex);
+        int lastIndex = registrationEmail.getBody().indexOf("\" target=\"_blank", firstIndex);
+        System.out.println("LAST INDEX IS: " + lastIndex);
+        String activationLink = registrationEmail.getBody().substring(firstIndex, lastIndex);
+        System.out.println("ACTIVATION LINK IS: " + activationLink);
+        return activationLink;
+    }
+}
